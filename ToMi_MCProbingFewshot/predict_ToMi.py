@@ -1,5 +1,4 @@
 import argparse, time
-import openai
 import json
 import tqdm
 from sklearn.metrics import accuracy_score
@@ -8,23 +7,32 @@ from sklearn.metrics import accuracy_score
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_set', type=str, default='test')
-    parser.add_argument('--openai_api_key', default=None, type=str, required=True, help="API key to use GPT-3.")
+    parser.add_argument('--openai_api_key', default=None, type=str, required=False, help="API key to use GPT-3.")
+    parser.add_argument('--model_name', default=None, type=str, required=True, help="blip or t5")
     parser.add_argument('--preprocess', action='store_true', help="preprocess the ToMi dataset")
-    parser.add_argument('--predict', action='store_true', help="Requests openai to generate responses")
+    parser.add_argument('--predict', action='store_true', help="Generate responses given model name")
     args = parser.parse_args()
     opt = vars(args)
-    openai.api_key = args.openai_api_key
-    input_path = f"ToMi/data/{opt['dataset_set']}.txt"
-    if opt['preprocess']:
-        preprocess_tomi(input_path, opt)
-    continue_index = 0
+    # openai.api_key = args.openai_api_key
+    if args.model_name == 't5':
+        from FLANT5 import FLAN_T5_Wrapper
+        model = FLAN_T5_Wrapper()
+        model_name = 'flant5'
+    else:
+        from BLIPv2 import BLIPv2_FLANT5_Wrapper
+        model = BLIPv2_FLANT5_Wrapper()
+        model_name = 'blipv2'
+
+    # input_path = f"ToMi/data/{opt['dataset_set']}.txt"
+    # if opt['preprocess']:
+    #     preprocess_tomi(input_path, opt)
     if opt['predict']:
-        predict(continue_index, opt)
-    gold, predictions = average_accuracy(opt)
-    joint_accuracy(gold, predictions)
+        predict(opt, model, model_name)
+    gold, predictions = average_accuracy(opt, model_name)
+    joint_accuracy(gold, predictions, model_name)
 
 
-def joint_accuracy(gold, predictions):
+def joint_accuracy(gold, predictions, model_name):
     joint_results = []
     gold_joint = []
     predictions_joint = []
@@ -39,33 +47,31 @@ def joint_accuracy(gold, predictions):
             gold_joint.append(True)
             joint_results = []
     accuracy_joint = accuracy_score(gold_joint, predictions_joint)
-    print(f"GPT3 Accuracy: {accuracy_joint:.3f}")
+    print(f"{model_name} Accuracy: {accuracy_joint:.3f}")
 
 
-def average_accuracy(opt):
+def average_accuracy(opt, model_name):
     gold = []
     predictions = []
-    with open(f'output/{opt["dataset_set"]}.txt') as f_in:
+    with open(f'output/{model_name}/{opt["dataset_set"]}.txt') as f_in:
         for i, line in enumerate(tqdm.tqdm(f_in)):
             fields = json.loads(line)
             gold.append(str(fields['label']))
             predictions.append(fields['prediction'])
     accuracy = accuracy_score(gold, predictions)
-    print(f"GPT3 Accuracy: {accuracy:.3f}")
+    print(f"{model_name} Accuracy: {accuracy:.3f}")
     return gold, predictions
 
-
-def predict(continue_index, opt):
+def predict(opt, model, model_name):
     preprompt = get_preprompt()
-    with open(f"output/{opt['dataset_set']}.txt", "a") as f_out:
+    with open(f"output/{model_name}/{opt['dataset_set']}.txt", "a") as f_out:
         with open(f"ToMi_processed_data/{opt['dataset_set']}.txt") as f_in:
             for i, line in enumerate(tqdm.tqdm(f_in)):
-                if i < continue_index:
-                    continue
-                print(i)
                 fields = json.loads(line)
                 prompt = preprompt + fields['context'] + "\n" + fields['question']
-                fields['prediction'] = open_ai_finalanswer_request(prompt, i, 0).strip()
+                # prompt = fields['context'] + " " + fields['question']  # for this run
+
+                fields['prediction'] = model.predict(preprompt + fields['context'], fields['question'])
                 fields['prompt'] = prompt
                 f_out.write(json.dumps(fields) + "\n")
 
